@@ -49,7 +49,8 @@ BEGIN {
         for 
         if else elsif unless
         while 
-        sub multi
+        sub multi method submethod
+        my our has
     ) ) {
         __PACKAGE__->add_rule(
             $_ =>  qq( <before \\s> { return { stmt => '$_' } } ));

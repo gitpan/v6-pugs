@@ -30,6 +30,7 @@ Makefile.PL
 MANIFEST			This list of files
 META.yml
 
+t/01-pod.t
 t/01-tap.t
 t/02-counter.t
 t/03-equal.t

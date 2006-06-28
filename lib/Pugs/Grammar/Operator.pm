@@ -36,14 +36,45 @@ attr:
         } }
     ;
 
+type:
+        BAREWORD
+        { $_[0]->{out}= $_[1] }
+    |   BAREWORD '|' type
+        { $_[0]->{out}= { op1 => $_[2], exp1 => $_[1], exp2 => $_[3] } }
+    ;
+    
+signature_term:
+        NUM 
+        { $_[0]->{out}= $_[1] }
+    |   type signature_term
+        { $_[0]->{out}= { type => $_[1], %{$_[2]} } }
+    |   ':' signature_term
+        { $_[0]->{out}= { named_only => 1, %{$_[2]} } }
+    |   '*' signature_term
+        { $_[0]->{out}= { splat => 1, %{$_[2]} } }
+    |   signature_term '?'
+        { $_[0]->{out}= { optional => 1, %{$_[1]} } }
+        
+    # XXX - infinite loop
+    # |   signature_term attr
+    #     { $_[0]->{out}= { %{$_[2]}, %{$_[1]} } }
+    
+    |   signature_term BAREWORD BAREWORD
+        { $_[0]->{out}= { attribute => [
+                [$_[2], $_[3],],
+            ], %{$_[1]} } }
+    ;
+
 signature:
         #empty  
         { $_[0]->{out}= { signature => [] } }
-    |   exp  signature
+    |   signature_term 
+        { $_[0]->{out}= { signature => [ $_[1] ] } }
+    |   signature ',' signature
         { $_[0]->{out}= { 
             signature => [ 
-                $_[1],
-                @{$_[2]{signature}}, 
+                @{$_[1]{signature}}, 
+                @{$_[3]{signature}}, 
             ], 
         } }
     ;
@@ -117,6 +148,14 @@ exp:
     | exp '.' BAREWORD exp   %prec P003
         { $_[0]->{out}= { op1 => 'method_call', self => $_[1], method => $_[3], param => $_[4], } }
         
+
+    | MY NUM attr 
+        { $_[0]->{out}= { 
+            op1 => { op => $_[1]{stmt} }, 
+            fixity => 'prefix', 
+            exp1 => $_[2],
+            %{$_[3]}, } }
+
     | stmt                
         { $_[0]->{out}= $_[1] }
     | stmt exp            

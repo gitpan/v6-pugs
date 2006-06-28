@@ -7,12 +7,22 @@ use warnings;
 use Data::Dumper;
 $Data::Dumper::Indent = 1;
 
+sub _mangle_ident {
+    my $s = shift;
+    $s =~ s/ ([^a-zA-Z0-9_:]) / '_'.ord($1).'_' /xge;
+    return $s;
+}
+
 sub _mangle_var {
     my $s = shift;
-    # globals
-    return '$::_EXCL_' if $s eq '$!';  
+    #warn "mangle: $s";
+    
+    # perl6 => perl5 variables
+    return '%::ENV'    if $s eq '%*ENV';  
+    # special variables
+    return '$::_EXCL_' if $s eq '$!';
 
-    substr($s,1)   =~ s/ ([^a-zA-Z0-9_:]) / '_'.ord($1).'_' /xge;
+    substr($s,1) =~ s/ ([^a-zA-Z0-9_:]) / '_'.ord($1).'_' /xge;
     return $s;
 }
 
@@ -22,6 +32,9 @@ sub _not_implemented {
 }
 
 sub emit {
+    
+    # <audreyt> %Namespace:: = ();  # clear stash
+    
     my ($grammar, $ast) = @_;
     # runtime parameters: $grammar, $string, $state, $arg_list
     # rule parameters: see Runtime::Rule.pm
@@ -43,7 +56,7 @@ sub _emit {
     die "unknown node: ", Dumper( $n )
         unless ref( $n ) eq 'HASH';
         
-    return $n->{bareword} 
+    return _mangle_ident( $n->{bareword} )
         if exists $n->{bareword};
         
     return $n->{code} 
@@ -58,10 +71,10 @@ sub _emit {
     return _mangle_var( $n->{scalar} )
         if exists $n->{scalar};
         
-    return $n->{array} 
+    return _mangle_var( $n->{array} )
         if exists $n->{array};
         
-    return $n->{hash} 
+    return _mangle_var( $n->{hash} )
         if exists $n->{hash};
         
     return '"' . $n->{double_quoted} . '"' 
@@ -117,19 +130,21 @@ sub _emit_parameter_binding {
         if  ! defined $n ||
             @$n == 0;
     
-    # XXX - $n should be hashref?
-    #warn "parameter list: ",Dumper $n->[0];
-    
-    my $param = _emit( $n->[0] );
+    #warn "parameter list: ",Dumper $n;
+
+    #    'scalar' => '$desc',    $v
+    #    'optional' => 1,        $v?
+    #    'named_only' => 1,      :$v
+    #    'type' => {             Str $v
+    #      'bareword' => 'Str',
+    #    }
+    #    'splat' => 1,           *$v
+    #    'attribute' => \@attr   $v is rw
+
+    my $param = join( ',' , 
+        map { _emit( $_ ) } @$n
+    );
     return "my ($param) = \@_;\n";
-        
-    #if ( @$n == 1 ) {
-    #    # just one parameter
-    #    my $param = _emit( $n->[0] );
-    #    return "my $param = \$_[0];\n";
-    #}
-    #
-    #return " # XXX - " . (scalar @$n) . " parameters\n";
 }
 
 sub default {
@@ -146,15 +161,33 @@ sub default {
 
     if ( $n->{op1} eq 'call' ) {
         # warn "call: ",Dumper $n;
+
+        if ( $n->{sub}{bareword} eq 'class'  ||
+             $n->{sub}{bareword} eq 'module' ) {
+            # Moose: package xxx; use Moose;
+            # class Point;
+            #warn "class: ",Dumper $n;
+            my $id;
+            $id = exists $n->{param}{cpan_bareword} 
+                  ? _mangle_ident( $n->{param}{cpan_bareword} )
+                  : _emit( $n->{param}{sub} );
+            my @a = split "-", $id;
+            my $version = ( @a > 1 && $a[-1] =~ /^[0-9]/ ? $a[-1] : '' );
+            return 'package ' . $a[0] .
+                ( $version ? ";\$$a[0]::VERSION = '$version'" : '' ) .
+                ( $n->{sub}{bareword} eq 'class' ? ';use Moose' : '' ) .
+                ";use Exporter 'import';our \@EXPORT";
+        }
+
         if ( $n->{sub}{bareword} eq 'use' ) {
             # use v6-pugs
             if ( exists $n->{param}{cpan_bareword} ) {
-                if ( $n->{param}{cpan_bareword} eq 'v6-pugs' ) {
+                if ( $n->{param}{cpan_bareword} =~ /^v6-/ ) {
                     return " # use v6-pugs\n";
                 }
             }
             #warn "call: ",Dumper $n;
-            if ( $n->{param}{sub}{bareword} eq 'v5' ) {
+            if ( $n->{param}{sub}{bareword} =~ /^v5/ ) {
                 return "warn 'use v5 - not implemented'";
             }
             if ( $n->{param}{sub}{bareword} eq 'v6' ) {
@@ -163,22 +196,35 @@ sub default {
             # use module::name 'param'
             return "use " . _emit( $n->{param} );
         }
-        return " " . $n->{sub}{bareword} . " '', " . _emit( $n->{param}, '  ' ) 
+
+        return " " . $n->{sub}{bareword} . " '', " . _emit( $n->{param} ) 
             if $n->{sub}{bareword} eq 'print' ||
                $n->{sub}{bareword} eq 'warn';
-        return " print '', " . _emit( $n->{param}, '  ' ) . ";\n" .
+        return " print '', " . _emit( $n->{param} ) . ";\n" .
             " print " . '"\n"'
             if $n->{sub}{bareword} eq 'say';
-        return ' ' . $n->{sub}{bareword} . '(' . _emit( $n->{param}, '  ' ) . ')';
+        return ' ' . _mangle_ident( $n->{sub}{bareword} ) . '(' . _emit( $n->{param} ) . ')';
     }
     
     if ( $n->{op1} eq 'method_call' ) {    
+        #warn "method_call: ", Dumper( $n );
         if ( $n->{method}{bareword} eq 'print' ||
              $n->{method}{bareword} eq 'warn' ) {
-            return " print '', " . _emit( $n->{self}, '  ' );
+            my $s = _emit( $n->{self} );
+            if ( $s eq _mangle_var('$*ERR') ) {  
+                return " print STDERR '', " . _emit( $n->{param} );
+            }
+            return " print '', $s";
         }
         if ( $n->{method}{bareword} eq 'say' ) {
-            return " print '', " . _emit( $n->{self}, '  ' ) . ', "\n"';
+            my $s = _emit( $n->{self} );
+            if ( $s eq _mangle_var('$*ERR') ) { 
+                return " print STDERR '', " . _emit( $n->{param} ) . ', "\n"';
+            }
+            return " print '', $s" . ', "\n"';
+        }
+        if ( $n->{method}{bareword} eq 'perl' ) {
+            return 'Pugs::Runtime::Perl6::perl(' . _emit( $n->{self} ) . ")\n";
         }
         #warn "method_call: ", Dumper( $n );
         
@@ -200,9 +246,20 @@ sub default {
                 ", " . _emit( $n->{param}, '  ' ) . ")" ;
         }
         
-        # normal methods
+        if ( exists $n->{self}{op1} ) {
+            # %var<item>.++;
+            #warn "method: ", Dumper( $n );
+            return " " . _emit( $n->{method} ) .
+                '(' .
+                join ( ",\n", 
+                    map { _emit( $_ ) } ( $n->{self}, $n->{param} )
+                ) .
+                ')';
+        }
+            
+        # normal methods or subs
         
-        return " " . $n->{sub}{bareword} .
+        return " " . _mangle_ident( $n->{sub}{bareword} ) .
             '(' .
             join ( ";\n", 
                 map { _emit( $_ ) } @{$n->{param}} 
@@ -228,13 +285,37 @@ sub statement {
 
     if ( $n->{op1}{stmt} eq 'sub' ) {
         #warn "sub: ",Dumper $n;
-        return  " " . $n->{op1}{stmt} . 
-                ' ' . $n->{name}{bareword} . 
+
+        my $name = _mangle_ident( $n->{name}{bareword} );
+
+        my $export = '';
+        for my $attr ( @{$n->{attribute}} ) {
+            if ( $attr->[0]{bareword} eq 'is' &&
+                 $attr->[1]{bareword} eq 'export' ) {
+                $export = "push \@EXPORT, '$name';";
+            }
+        }
+
+        return  $export .
+                " " . $n->{op1}{stmt} . 
+                ' ' . $name . 
                 " {\n" . 
                     _emit_parameter_binding( $n->{signature} ) .
                     _emit( $n->{block} ) . 
                 "\n }";
     }
+
+    if ( $n->{op1}{stmt} eq 'method' ) {
+        # Moose: sub clear { my $self = shift;';
+        # method clear {
+        #warn "method: ",Dumper $n;
+        return "sub " . _emit( $n->{name} ) .
+            " { my \$self = shift; " . 
+                _emit_parameter_binding( $n->{signature} ) .
+                _emit( $n->{block} ) . 
+            "\n }";
+    }
+
 
     if ( $n->{op1}{stmt} eq 'for' ) {
         #warn "sub: ",Dumper $n;
@@ -303,9 +384,12 @@ sub postcircumfix {
     
     if ( $n->{op1}{op} eq '[' &&
          $n->{op2}{op} eq ']' ) {
-        #return '()'
-        #    unless defined  $n->{exp1};
-        
+
+        if ( ! exists $n->{exp2} ) {
+            # $array[]
+            return '@{ ' . _emit( $n->{exp1} ) . ' }';
+        }
+                
         # avoid p5 warning - "@a[1] better written as $a[1]"
         if (   (  exists $n->{exp2}{int} 
                || exists $n->{exp2}{scalar} 
@@ -328,8 +412,26 @@ sub prefix {
     
     if ( $n->{op1}{op} eq 'my' ||
          $n->{op1}{op} eq 'our' ) {
+        die "not implemented 'attribute'",Dumper $n
+            if @{$n->{attribute}};
         return $n->{op1}{op} . ' ' . _emit( $n->{exp1} );
     }
+
+    if ( $n->{op1}{op} eq 'has' ) {
+            # Moose: has 'xxx';
+            # has $x;
+            #warn "has: ",Dumper $n;
+            my $attr = join( ', ', 
+                map { 
+                    join( ' => ', map { "'" . _emit($_) . "'" } @$_ )
+                } @{$n->{attribute}}
+            );
+
+            my $name = _emit( $n->{exp1} );
+            $name =~ s/^\$//;  # remove sigil
+            return $n->{op1}{op} . " '$name' => ( $attr )";
+    }
+
     if ( $n->{op1}{op} eq 'try' ) {
         #warn "try: ", Dumper( $n );
         #if ( exists $n->{trait} ) {
@@ -367,7 +469,13 @@ sub postfix {
          $n->{op1}{op} eq '--' ) {
         return _emit( $n->{exp1} ) . $n->{op1}{op};
     }
-    
+
+    if ( $n->{op1}{op} eq 'ANGLE' ) {
+        my $name = _emit( $n->{exp1} );
+        $name =~ s/^\%/\$/;
+        return $name . '{ \'' . $n->{op1}{angle_quoted} . '\' }';
+    }
+
     return _not_implemented( $n, "postfix" );
 }
 

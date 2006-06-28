@@ -142,8 +142,16 @@ sub ast {
             if ( $ast->{stmt} eq 'if' or $ast->{stmt} eq 'unless' ) {
                 $t = [ 'IF' => $ast ]
             }
-            elsif ( $ast->{stmt} eq 'sub' or $ast->{stmt} eq 'multi' ) {
+            elsif ( $ast->{stmt} eq 'sub' 
+                || $ast->{stmt} eq 'multi' 
+                || $ast->{stmt} eq 'submethod' 
+                || $ast->{stmt} eq 'method') {
                 $t = [ 'SUB' => $ast ]
+            }
+            elsif ( $ast->{stmt} eq 'my' 
+                || $ast->{stmt} eq 'our' 
+                || $ast->{stmt} eq 'has' ) {
+                $t = [ 'MY' => $ast ]
             }
             elsif ( $ast->{stmt} eq '{' ) {
                 $t = [ 'BLOCK_START' => $ast ]
