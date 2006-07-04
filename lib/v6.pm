@@ -1,5 +1,5 @@
 package v6;
-$v6::VERSION = '0.002';
+$v6::VERSION = '0.003';
 
 # Documentation in the __END__
 use 5.006;
@@ -17,23 +17,19 @@ sub pmc_can_output { 1 }
 sub pmc_compile {
     my ($class, $source) = @_;
 
-    my $file = (caller(4))[1];
-    if (defined $file and $file !~ /\.pm$/i) {
-        # Do the freshness check ourselves
-        my $pmc = $file.'c';
-        my $pmc_is_uptodate = (-s $pmc and (-M $pmc <= -M $file));
-        if ($pmc_is_uptodate) {
-            local $@; do $pmc; die $@ if $@; exit 0;
-        }
-    }
-
     require Pugs::Compiler::Perl6;
 
     my $p6 = Pugs::Compiler::Perl6->compile( $source );
     my $perl5 = $p6->{perl5};
 
+    # Don't write when we failed to compile, otherwise it never recompiles!
+    die unless length $perl5;
+
     # $perl5 =~ s/do\{(.*)\}/$1/s;
+    my ($package, $file) = caller(4);
     $perl5 = 
+        ( $package ? "package $package;\n" : "# no package name\n" ).
+        "use Scalar::Util;\n" .
         "use Pugs::Runtime::Perl6;\n" . 
         "use strict;\n" . 
         "no warnings 'void';\n" .   # t/07-try.t, t/07-ref.t

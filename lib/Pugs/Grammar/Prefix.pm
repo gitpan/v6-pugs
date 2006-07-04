@@ -58,6 +58,12 @@ BEGIN {
         other => 'prefix:<+>',
     );
     __PACKAGE__->add_rule(
+        name => '!',
+        assoc => 'left',
+        precedence => 'equal',
+        other => 'prefix:<+>',
+    );
+    __PACKAGE__->add_rule(
         name => 'eval',
         assoc => 'left',
         precedence => 'equal',
@@ -116,13 +122,13 @@ BEGIN {
         name => 'do',
         assoc => 'non',
         precedence => 'equal',
-        other => 'infix:<IF>',
+        other => 'infix:<+>',
     );
     __PACKAGE__->add_rule(
         name => 'try',
         assoc => 'non',
         precedence => 'equal',
-        other => 'infix:<IF>',
+        other => 'infix:<+>',
     );
 
     #for ( qw( print use push pop ) ) {
@@ -133,7 +139,7 @@ BEGIN {
     #        other => 'say',
     #    );
     #}
-    for ( qw( my our ) ) {
+    for ( qw( my our has ) ) {
         __PACKAGE__->add_rule(
             name => $_,
             assoc => 'left',
