@@ -1,5 +1,5 @@
 package v6;
-$v6::VERSION = '0.003';
+$v6::VERSION = '0.005';
 
 # Documentation in the __END__
 use 5.006;
@@ -13,6 +13,17 @@ my $bin;
 BEGIN { $bin = ((dirname(__FILE__) || '.') . "/..") };
 
 sub pmc_can_output { 1 }
+
+sub pmc_parse_blocks {
+    my $class = shift;
+    my $text  = shift;
+    return [$text, {$class => { use => 'dummy' }}, [$class]]
+}
+
+sub pmc_filter {
+    my ($class, $module, $line_number, $post_process) = @_;
+    $class->SUPER::pmc_filter($module, 0, $post_process);
+}
 
 sub pmc_compile {
     my ($class, $source) = @_;
@@ -29,6 +40,10 @@ sub pmc_compile {
     my ($package, $file) = caller(4);
     $perl5 = 
         ( $package ? "package $package;\n" : "# no package name\n" ).
+        (($package and ($package eq 'main')) ? (
+            "use Config;\n".
+            "use lib split(/\\Q\$Config{path_sep}/, \$ENV{PERL6LIB} || '');\n"
+        ) : '').
         "use Scalar::Util;\n" .
         "use Pugs::Runtime::Perl6;\n" . 
         "use strict;\n" . 

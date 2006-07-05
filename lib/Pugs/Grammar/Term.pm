@@ -22,10 +22,20 @@ sub pair {
         match => $1,
         tail  => $3,
         capture => { 
-            pair => { key => { single_quoted => $1 }, value => { single_quoted => $2 } } 
+            pair => { key => { single_quoted => $1 }, value => defined $2 ? { single_quoted => $2 } : { int => 1 } }
         },
     } )
-        if $_[0] =~ /^:([_\w]+)<(.*?)>(.*)$/s;
+        if $_[0] =~ /^:([_\w]+)(?:<(.*?)>)?(.*)$/s;
+    # :$foo
+    return Pugs::Runtime::Match->new( { 
+        bool  => 1,
+        match => $1,
+        tail  => $2,
+        capture => { 
+            pair => { key => { single_quoted => $1 }, value => { scalar => '$'.$1 } }
+        },
+    } )
+        if $_[0] =~ /^:\$([_\w]+)(.*)$/s;
     return $class->no_match;
 };
 
@@ -38,13 +48,19 @@ sub cpan_bareword {
         tail  => $2,
         capture => { cpan_bareword => $1 },
     } )
-        if $_[0] =~ /^ ([_\w\d]+ \- [_\w\d\-\.]+) ( (?: \(|\;|\s|$ ) .*)$/sx;
+        if $_[0] =~ /^ ([_\w\d]+ \- [_\w\d\-\.*]+) ( (?: \(|\;|\s|$ ) .*)$/sx;
     return $class->no_match;
 };
 
 sub substitution {
     my $grammar = shift;
     return $grammar->no_match unless $_[0];
+    my $options;
+    while ($_[0] =~ s/^:(\w+)//) {
+	$options->{lc($1)} = 1;
+    }
+    return $grammar->no_match unless substr($_[0], 0 , 1) eq '/';
+    substr($_[0], 0, 1, '');
     my ($extracted,$remainder) = Text::Balanced::extract_delimited( "/" . $_[0], "/" );
     $extracted = substr( $extracted, 1, -1 ) if length($extracted) > 1;
     my $extracted2;
@@ -54,7 +70,7 @@ sub substitution {
         bool  => 1, # ( $extracted ne '' ),
         match => $extracted,
         tail  => $remainder,
-        capture => [ $extracted, $extracted2 ],
+        capture => { options => $options, substitution => [$extracted, $extracted2] },
     } );
 };
 
@@ -226,11 +242,10 @@ sub recompile {
             <Pugs::Grammar::Term.double_quoted>
             { return { double_quoted => $/{'Pugs::Grammar::Term.double_quoted'}->() ,} }
         ) ),
-        q(s:g/) => Pugs::Compiler::Regex->compile( q(
+        q(s) => Pugs::Compiler::Regex->compile( q(
             <Pugs::Grammar::Term.substitution>
             { return { 
                     substitution => $/{'Pugs::Grammar::Term.substitution'}->(),
-                    options => { g => 1 },
                 } 
             }
         ) ),
